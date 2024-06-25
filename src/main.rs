@@ -1,37 +1,83 @@
-use std::ptr::null;
-use std::fmt::{self, write};
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::fmt;
 
 static operators: [&str; 9] = ["&&", "||", "!", "->", "<-", "<->", "^", "!&&", "!||"];
 static commands: [&str; 9] = ["exit", "table", "valid", "satis", "semcons", "cnf", "dnf", "latex", "tree"];
-static operatorTypes [tokenType; 9] = [tokenType::NOT, tokenType::AND, tokenType::OR, tokenType::IMPLIES, tokenType::CONVERSE, tokenType::EQUIVALENCE, tokenType::XOR, tokenType::NOR];
-static precedences: HashMap<tokenType, u8> = HashMap::from([(tokenType::BOOL, 0), (tokenType::BLOCK, 0), (tokenType::OP)]);
+static operatorTypes: [TokenType; 9] = [
+    TokenType::NOT, TokenType::AND, TokenType::OR, TokenType::IMPLIES, TokenType::CONVERSE, TokenType::EQUIVALENCE, TokenType::XOR, TokenType::NAND, TokenType::NOR
+];
 
+static operatorMap: Lazy<HashMap<String, TokenType>> = Lazy::new(|| {
+    HashMap::from([
+        ("&&".to_string(), TokenType::AND),
+        ("||".to_string(), TokenType::OR),
+        ("!".to_string(), TokenType::NOT),
+        ("->".to_string(), TokenType::IMPLIES),
+        ("<-".to_string(), TokenType::CONVERSE),
+        ("<->".to_string(), TokenType::EQUIVALENCE),
+        ("^".to_string(), TokenType::XOR),
+        ("!&&".to_string(), TokenType::NAND),
+        ("!||".to_string(), TokenType::NOR)
+    ])
+});
+
+static precedences: Lazy<HashMap<TokenType, u8>> = Lazy::new(|| {
+    HashMap::from([
+        (TokenType::BOOL, 0),
+        (TokenType::BLOCK, 0),
+        (TokenType::NOT, 1),
+        (TokenType::AND, 3),
+        (TokenType::OR, 4),
+        (TokenType::IMPLIES, 5),
+        (TokenType::CONVERSE, 5),
+        (TokenType::EQUIVALENCE, 6),
+        (TokenType::XOR, 2),
+        (TokenType::NAND, 2),
+        (TokenType::NOR, 2)
+    ])
+});
 
 fn main() {
-    let mut tok = Tokenizer { line: "[!b <-> (0 || 1)]".to_string(), index: 0, tokens: vec![], current: '\0' };
+    let mut tok = Tokenizer {
+        line: "[0 || 1]".to_string(),
+        index: 0,
+        tokens: vec![],
+        current: '\0'
+    };
 
     tok.tokenize();
     tok.print();
 
     for token in tok.tokens {
-        if token.tType == tokenType::EXPRESSION {
+        if token.tType == TokenType::EXPRESSION {
             if checkSyntax(&token.expression) {
                 println!(" ");
-                println!("everything is ok!");
-            }
-            else {
+                //println!("everything is ok!");
+            } else {
                 println!(" ");
                 println!("something in the logic is false");
             }
         }
     }
 
-    println!("{:?}", AST { root: Some(ASTNode { nType: "bool".to_string() , content: "1".to_string(), left: None, right: None }) });
+    // println!("{:?}", AST { root: Some(ASTNode { n_type: "bool".to_string() , content: "1".to_string(), left: None, right: None }) });
+
+    let mut ast = AST { root: None };
+    let root = ASTNode {
+        nType: "bool".to_string(),
+        content: "1".to_string(),
+        left: None,
+        right: None
+    };
+
+    ast.setRoot(&root);
+
+    //println!("{:#?}", ast);
 }
 
-#[derive(PartialEq, Debug)]
-enum tokenType {
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+enum TokenType {
     EOL,
     ERROR,
     IDENTIFIER,
@@ -52,12 +98,11 @@ enum tokenType {
     XOR,
     NAND,
     NOR,
-
 }
 
 #[derive(Debug)]
 struct Token {
-    tType: tokenType,
+    tType: TokenType,
     content: String,
     expression: Vec<Token>,
     start: u16,
@@ -73,59 +118,63 @@ struct Tokenizer {
 
 fn checkSyntax(expression: &Vec<Token>) -> bool {
     let mut i: u16 = 0;
-    let nullToken = Token { tType: tokenType::EOL, content: "".to_string(), expression: vec![], start: 0, end: 0 };  
+    let nullToken = Token { 
+        tType: TokenType::EOL, 
+        content: "".to_string(), 
+        expression: vec![], 
+        start: 0, 
+        end: 0 
+    };
 
-    while i < (expression.len() as u16) { 
-        let mut curr = &expression[i as usize];
+    while i < expression.len() as u16 {
+        let curr = &expression[i as usize];
 
-        let next = if i + 1 < (expression.len() as u16) {
-            &expression[(i+1) as usize]
+        let next = if i + 1 < expression.len() as u16 {
+            &expression[(i + 1) as usize]
         } else {
             &nullToken
         };
 
-        //println!("{}", i);
-        match curr {
-            _ if curr.tType == tokenType::BOOL => {
-                if (*next).tType == tokenType::EOL || (*next).tType == tokenType::OPERATOR || (*next).tType == tokenType::RPAREN {
+        match curr.tType {
+            TokenType::BOOL => {
+                if next.tType == TokenType::EOL || operatorTypes.contains(&next.tType) || next.tType == TokenType::RPAREN {
                     i += 1;
                     continue;
-                } 
+                }
                 return false;
             }
-            _ if curr.tType == tokenType::IDENTIFIER => {
-                if (*next).tType == tokenType::EOL || (*next).tType == tokenType::OPERATOR || (*next).tType == tokenType::RPAREN {
+            TokenType::IDENTIFIER => {
+                if next.tType == TokenType::EOL || operatorTypes.contains(&next.tType) || next.tType == TokenType::RPAREN {
                     i += 1;
                     continue;
                 }
                 return false;
-            } 
-            _ if curr.tType == !tokenType::NOT => {
-                if (curr.content != "!".to_string()) && ((*next).tType == tokenType::BOOL || (*next).tType == tokenType::IDENTIFIER || ((*next).tType == tokenType::OPERATOR && ((*next).content == "!".to_string())) || (*next).tType == tokenType::LPAREN) {
+            }
+            _ if operatorTypes.contains(&curr.tType) => {
+                if (curr.tType != TokenType::NOT) && (next.tType == TokenType::BOOL || next.tType == TokenType::IDENTIFIER || operatorTypes.contains(&next.tType) || next.tType == TokenType::LPAREN) {
                     i += 1;
                     continue;
-                }
-                else if (curr.content == "!".to_string()) && ((*next).tType == tokenType::BOOL || (*next).tType == tokenType::IDENTIFIER || (*next).tType == tokenType::LPAREN) {
+                } else if (curr.tType == TokenType::NOT) && (next.tType == TokenType::BOOL || next.tType == TokenType::IDENTIFIER || next.tType == TokenType::LPAREN) {
                     i += 1;
                     continue;
                 }
                 return false
             }
-            _ if curr.tType == tokenType::LPAREN => {
-                if (*next).tType == tokenType::LPAREN || (*next).tType == tokenType::BOOL || (*next).tType == tokenType::IDENTIFIER || (*next).content == "!".to_string() {
+            TokenType::LPAREN => {
+                if next.tType == TokenType::LPAREN || next.tType == TokenType::BOOL || next.tType == TokenType::IDENTIFIER || next.tType == TokenType::NOT {
                     i += 1;
                     continue;
                 }
                 return false;
             }
-            _ if curr.tType == tokenType::RPAREN => {
-                if (((*next).tType == tokenType::OPERATOR) && ((*next).content != "!".to_string())) || (*next).tType == tokenType::RPAREN || (*next).tType == tokenType::EOL {
+            TokenType::RPAREN => {
+                if (operatorTypes.contains(&curr.tType) && (next.tType != TokenType::NOT)) || next.tType == TokenType::RPAREN || next.tType == TokenType::EOL {
                     i += 1;
                     continue;
-                } 
+                }
                 return false;
             }
-            _ if curr.tType == tokenType::EOL => { break }
+            TokenType::EOL => { break }
             _ => { return false; }
         }
     }
@@ -133,20 +182,28 @@ fn checkSyntax(expression: &Vec<Token>) -> bool {
     true
 }
 
-impl fmt::Display for tokenType {
+impl fmt::Display for TokenType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            tokenType::EOL => write!(f, "EOL"),
-            tokenType::ERROR => write!(f, "ERROR"),
-            tokenType::IDENTIFIER => write!(f, "IDENTIFIER"),
-            tokenType::COMMAND => write!(f, "COMMAND"),
-            tokenType::BOOL => write!(f, "BOOL"),
-            tokenType::OPERATOR => write!(f, "OPERATOR"),
-            tokenType::EXPRESSION => write!(f, "EXPRESSION"),
-            tokenType::LPAREN => write!(f, "LPAREN"),
-            tokenType::RPAREN => write!(f, "RPAREN"),
-            tokenType::BLOCK => write!(f, "BLOCK"),
-            tokenType::COLON => write!(f, "COLON")
+            TokenType::EOL => write!(f, "EOL"),
+            TokenType::ERROR => write!(f, "ERROR"),
+            TokenType::IDENTIFIER => write!(f, "IDENTIFIER"),
+            TokenType::COMMAND => write!(f, "COMMAND"),
+            TokenType::BOOL => write!(f, "BOOL"),
+            TokenType::EXPRESSION => write!(f, "EXPRESSION"),
+            TokenType::LPAREN => write!(f, "LPAREN"),
+            TokenType::RPAREN => write!(f, "RPAREN"),
+            TokenType::BLOCK => write!(f, "BLOCK"),
+            TokenType::COLON => write!(f, "COLON"),
+            TokenType::NOT => write!(f, "NOT"),
+            TokenType::AND => write!(f, "AND"),
+            TokenType::OR => write!(f, "OR"),
+            TokenType::IMPLIES => write!(f, "IMPLIES"),
+            TokenType::CONVERSE => write!(f, "CONVERSE"),
+            TokenType::EQUIVALENCE => write!(f, "EQUIVALENCE"),
+            TokenType::XOR => write!(f, "XOR"),
+            TokenType::NAND => write!(f, "NAND"),
+            TokenType::NOR => write!(f, "NOR")
         }
     }
 }
@@ -160,10 +217,9 @@ impl fmt::Display for Token {
 impl Tokenizer {
     fn print(&self) {
         for token in &self.tokens {
-            if token.tType == tokenType::EXPRESSION || token.tType == tokenType::BLOCK {
+            if token.tType == TokenType::EXPRESSION || token.tType == TokenType::BLOCK {
                 print!("[{}] {:?} {}..{}", token.tType, token.expression, token.start, token.end);
-            }
-            else {
+            } else {
                 print!("{}", token);
             }
         }
@@ -190,29 +246,22 @@ impl Tokenizer {
         }
 
         if commands.contains(&identifier.as_str()) {
-            return Token{tType: tokenType::COMMAND, content: identifier, expression: vec![], start: start, end: self.index-1};
+            return Token {
+                tType: TokenType::COMMAND,
+                content: identifier,
+                expression: vec![],
+                start,
+                end: self.index
+            }
         }
 
-        Token{tType: tokenType::IDENTIFIER, content: identifier, expression: vec![], start: start, end: self.index-1}
-    }
-
-    fn makeNumber(&mut self) -> Token {
-        let mut boolean = String::new();
-        boolean.push(self.current);
-        let start: u16 = self.index;
-
-        self.forward();
-
-        while self.current.is_numeric() {
-            boolean.push(self.current);
-            self.forward();
+        Token {
+            tType: TokenType::IDENTIFIER,
+            content: identifier,
+            expression: vec![],
+            start,
+            end: self.index
         }
-
-        if boolean.len() == 1 {
-            return Token{tType: tokenType::BOOL, content: boolean, expression: vec![], start: start, end: start};
-        }
-
-        Token{tType: tokenType::ERROR, content: boolean, expression: vec![], start, end: self.index-1}
     }
 
     fn makeOperator(&mut self) -> Token {
@@ -221,17 +270,28 @@ impl Tokenizer {
         let start: u16 = self.index;
 
         self.forward();
-
         while "&|!-^<>".contains(self.current) {
             operator.push(self.current);
             self.forward();
         }
 
         if operators.contains(&operator.as_str()) {
-            return Token{tType: tokenType::OPERATOR, content: operator, expression: vec![], start: start, end: self.index-1};
+            return Token {
+                tType: operatorMap.get(&operator).unwrap().clone(),
+                content: operator,
+                expression: vec![],
+                start,
+                end: self.index-1
+            }
         }
 
-        Token{tType: tokenType::ERROR, content: operator, expression: vec![], start: start, end: self.index-1}
+        Token {
+            tType: TokenType::ERROR,
+            content: operator,
+            expression: vec![],
+            start,
+            end: self.index
+        }
     }
 
     fn makeExpression(&mut self) -> Token {
@@ -246,131 +306,94 @@ impl Tokenizer {
             self.forward()
         }
 
-        let mut tokenizer = Tokenizer { line: exprStr , index: 0, tokens: vec![], current: '\0' };
+        let mut tokenizer = Tokenizer { 
+            line: exprStr, 
+            index: 0, 
+            tokens: vec![], 
+            current: '\0' 
+        };
+        
         tokenizer.tokenize();
         expression = tokenizer.tokens;
 
-        Token { tType: tokenType::EXPRESSION, content: "".to_string(), expression: expression, start: start, end: self.index }
+        Token { 
+            tType: TokenType::EXPRESSION, 
+            content: "".to_string(), 
+            expression, 
+            start, 
+            end: self.index 
+        }
     }
 
     fn tokenize(&mut self) {
-        if self.line.len() == 0 {
-            return
-        }
         self.current = self.line.chars().nth(self.index as usize).unwrap();
-
         while self.current != '\0' {
-            match self.current {
-                _ if self.current.is_alphabetic() => {
-                    let identifier = self.makeIdentifier();
-                    self.tokens.push(identifier);
-                }
-                _ if self.current.is_numeric() => {
-                    let number = self.makeNumber();
-                    self.tokens.push(number);
-                }
-                _ if "&|!-^<".contains(self.current) => {
-                    let operator = self.makeOperator();
-                    self.tokens.push(operator);
-                }
-                _ if self.current == '[' => {
-                    let expression = self.makeExpression();
-                    self.tokens.push(expression);
-                }
-                _ if self.current == ':' => {
-                    self.tokens.push(Token { tType: tokenType::COLON, content: ":".to_string(), expression: vec![], start: self.index, end: self.index });
-                    self.forward();
-                }
-                _ if self.current == '(' => {
-                    self.tokens.push(Token { tType: tokenType::LPAREN, content: "(".to_string(), expression: vec![], start: self.index, end: self.index });
-                    self.forward();
-                }
-                _ if self.current == ')' => {
-                    self.tokens.push(Token { tType: tokenType::RPAREN, content: ")".to_string(), expression: vec![], start: self.index, end: self.index });
-                    self.forward();
-                }
-                _ => self.forward() 
+
+            if self.current.is_whitespace() {
+                self.forward();
+                continue;
             }
+
+            if self.current.is_alphabetic() {
+                let identifier = self.makeIdentifier();
+                self.tokens.push(identifier);
+                continue;
+            }
+
+            if self.current == '0' || self.current == '1' {
+                self.tokens.push(Token { 
+                    tType: TokenType::BOOL,
+                    content: self.current.to_string(),
+                    expression: vec![],
+                    start: self.index,
+                    end: self.index
+                });
+                self.forward();
+                continue;
+            }
+
+            if self.current == '[' {
+                let expression = self.makeExpression();
+                self.tokens.push(expression);
+                continue;
+            }
+
+            if "&|!-^<".contains(self.current) {
+                let operator = self.makeOperator();
+                self.tokens.push(operator);
+                continue;
+            }
+
+            match self.current {
+                '(' => self.tokens.push(Token { tType: TokenType::LPAREN, content: self.current.to_string(), expression: vec![], start: self.index, end: self.index }),
+                ')' => self.tokens.push(Token { tType: TokenType::RPAREN, content: self.current.to_string(), expression: vec![], start: self.index, end: self.index }),
+                ':' => self.tokens.push(Token { tType: TokenType::COLON, content: self.current.to_string(), expression: vec![], start: self.index, end: self.index }),
+                _ => self.tokens.push(Token { tType: TokenType::ERROR, content: self.current.to_string(), expression: vec![], start: self.index, end: self.index })
+            }
+
+            self.forward();
         }
 
-        self.tokens.push(Token { tType: tokenType::EOL, content: "".to_string(), expression: vec![], start: self.index, end: self.index })
+        self.tokens.push(Token { tType: TokenType::EOL, content: "".to_string(), expression: vec![], start: self.index, end: self.index });
     }
-}
-
-fn NOT(bool1: String) -> String {
-    if bool1 == "1".to_string() {
-        return "0".to_string()
-    }
-    "1".to_string()
-}
-
-fn AND(bool1: String, bool2: String) -> String {
-    if bool1 == "1".to_string() && (bool1 == bool2) {
-        return "1".to_string()
-    }
-    "0".to_string()
-}
-
-fn OR(bool1: String, bool2: String) -> String {
-    if bool1 == "1".to_string() || bool2 == "1".to_string() {
-        return "1".to_string()
-    }
-    "0".to_string()
-}
-
-fn IMPLIES(bool1: String, bool2: String) -> String {
-    return OR(NOT(bool1.clone()), bool2.clone())
-}
-
-fn CONVERSE(bool1: String, bool2: String) -> String {
-    return IMPLIES(bool2.clone(), bool1.clone())
-}
-
-fn EQUIVALENCE(bool1: String, bool2: String) -> String {
-    return AND(IMPLIES(bool1.clone(), bool2.clone()), IMPLIES(bool2.clone(), bool1.clone()))
-}
-
-fn XOR(bool1: String, bool2: String) -> String {
-    return NOT(EQUIVALENCE(bool1.clone(), bool2.clone()))
-}
-
-fn NAND(bool1: String, bool2: String) -> String {
-    return NOT(AND(bool1.clone(), bool2.clone()))
-}
-
-fn NOR(bool1: String, bool2: String) -> String {
-    return NOT(OR(bool1.clone(), bool2.clone()))
 }
 
 #[derive(Debug)]
-struct AST<'a> {
-    root: Option<ASTNode<'a>>
+struct AST {
+    root: Option<ASTNode>
 }
 
-#[derive(Debug)]
-struct ASTNode<'a> {
+impl AST {
+    fn setRoot(&mut self, root: &ASTNode) {
+        self.root = Some(root.clone());
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ASTNode {
     nType: String,
     content: String,
-    left: Option<&'a ASTNode<'a>>,
-    right: Option<&'a ASTNode<'a>>
+    left: Option<Box<ASTNode>>,
+    right: Option<Box<ASTNode>>
 }
 
-impl ASTNode {
-    fn addLeft(&mut self, left: ASTNode) {
-        self.left = left;
-    }
-
-    fn addRight(&mut self, right: ASTNode) {
-        self.right = right;
-    }
-}
-
-struct Evaluator {
-    tokens: Vec<Token>
-}
-
-impl Evaluator {
-    fn buildTree() -> AST {
-        AST { root: None }
-    } 
-}
