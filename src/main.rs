@@ -1,6 +1,7 @@
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::fmt;
+use std::iter::from_fn;
+use std::{fmt, result, usize};
 
 static operators: [&str; 9] = ["&&", "||", "!", "->", "<-", "<->", "^", "!&&", "!||"];
 static commands: [&str; 9] = ["exit", "table", "valid", "satis", "semcons", "cnf", "dnf", "latex", "tree"];
@@ -24,6 +25,7 @@ static operatorMap: Lazy<HashMap<String, TokenType>> = Lazy::new(|| {
 
 static precedences: Lazy<HashMap<TokenType, u8>> = Lazy::new(|| {
     HashMap::from([
+        (TokenType::EOL, 0),
         (TokenType::BOOL, 0),
         (TokenType::BLOCK, 0),
         (TokenType::NOT, 1),
@@ -40,20 +42,36 @@ static precedences: Lazy<HashMap<TokenType, u8>> = Lazy::new(|| {
 
 fn main() {
     let mut tok = Tokenizer {
-        line: "[0 || 1]".to_string(),
+        line: "[1 && (0 || b)]".to_string(),
         index: 0,
         tokens: vec![],
         current: '\0'
     };
 
     tok.tokenize();
-    tok.print();
+    //printTokens(&tok.tokens);
 
-    for token in tok.tokens {
+        for mut token in tok.tokens {
         if token.tType == TokenType::EXPRESSION {
             if checkSyntax(&token.expression) {
-                println!(" ");
-                //println!("everything is ok!");
+                let mut tokens = token.expression;
+                mapToBool(&mut tokens, HashMap::from([("b".to_string(), "0".to_string())]));
+                tokens = parseBlocks(&mut tokens);
+                //printTokens(&tokens);
+                //println!("h");
+                let mut ev = Evaluator {
+                    expression: tokens.clone(),
+                    tree: AST { root: None }
+                };
+
+                ev.buildAST();
+                let a = ev.getAST();
+
+                //println!("{:?}",ev.expression.clone());
+
+                println!("{:#?}", a);
+ 
+                    //println!("everything is ok!");
             } else {
                 println!(" ");
                 println!("something in the logic is false");
@@ -100,7 +118,7 @@ enum TokenType {
     NOR,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Token {
     tType: TokenType,
     content: String,
@@ -114,6 +132,20 @@ struct Tokenizer {
     index: u16,
     tokens: Vec<Token>,
     current: char
+}
+
+fn printTokens(tokens: &Vec<Token>) {
+    for token in tokens {
+        if token.tType == TokenType::EXPRESSION || token.tType == TokenType::BLOCK {
+            print!("[{}] [ ", token.tType);
+            for tok in &token.expression {
+                print!("{} ", tok);
+            }
+            print!("] {}..{}",token.start,token.end);
+        } else {
+            print!("{}", token);
+        }
+    }
 }
 
 fn checkSyntax(expression: &Vec<Token>) -> bool {
@@ -215,16 +247,6 @@ impl fmt::Display for Token {
 }
 
 impl Tokenizer {
-    fn print(&self) {
-        for token in &self.tokens {
-            if token.tType == TokenType::EXPRESSION || token.tType == TokenType::BLOCK {
-                print!("[{}] {:?} {}..{}", token.tType, token.expression, token.start, token.end);
-            } else {
-                print!("{}", token);
-            }
-        }
-    }
-
     fn forward(&mut self) {
         self.index += 1;
         if self.index < self.line.chars().count() as u16 {
@@ -355,6 +377,7 @@ impl Tokenizer {
             if self.current == '[' {
                 let expression = self.makeExpression();
                 self.tokens.push(expression);
+                self.forward();
                 continue;
             }
 
@@ -378,7 +401,71 @@ impl Tokenizer {
     }
 }
 
-#[derive(Debug)]
+fn mapToBool(expression: &mut Vec<Token>, idToBool: HashMap<String, String>) {
+    let exp = expression.clone();
+    for (i, token) in exp.iter().enumerate().clone() {
+        if (token.tType == TokenType::IDENTIFIER) && (idToBool.contains_key(&token.content)) {
+            expression[i as usize].tType = TokenType::BOOL;
+            expression[i as usize].content = (*idToBool.get(&token.content).unwrap().clone()).to_string();
+        }
+    }
+}
+
+fn getBlock(entryPoint: u16, expression: Vec<Token>) -> (bool, (Token, u16)) {
+    let mut exprStack: Vec<Token> = vec![];
+    let mut i: u16 = entryPoint+1;
+    let exprStart: u16 = expression[entryPoint as usize].start;
+    let mut exprEnd: u16 = 0;
+    let mut open: u16 = 1;
+
+    while i < (expression.len() as u16) {
+        let curr = &expression[i as usize];
+        if open > 0 && curr.tType == TokenType::LPAREN {
+            open += 1;
+            exprStack.push(curr.clone());
+            i += 1;
+            continue;
+        }
+        else if open > 0 && curr.tType == TokenType::RPAREN {
+            open -= 1;
+            if open != 0 {
+                exprStack.push(curr.clone());
+                i += 1;
+                continue;
+            }
+            else {
+                exprEnd = curr.end;
+                return (true, (Token { tType: TokenType::BLOCK, content: "".to_string(), expression: parseBlocks(&mut exprStack), start: exprStart, end: exprEnd }, i));
+            }
+        }
+        else {
+            exprStack.push(curr.clone());
+            i += 1;
+        }
+    }
+    return (false, (Token { tType: TokenType::BLOCK, content: "".to_string(), expression: vec![], start: 0, end: 0 }, 0));
+}
+
+fn parseBlocks(expression: &mut Vec<Token>) -> Vec<Token> {
+    let mut i: u16 = 0;
+        
+    while i < (expression.len() as u16) {
+        let curr = &expression[i as usize];
+        if curr.tType == TokenType::LPAREN {
+            let result = getBlock(i, expression.to_vec());
+            if result.0 {
+                expression[i as usize] = (result.1).0;
+                for _ in 0..(result.1).1-i {
+                    expression.remove((i+1) as usize);
+                }
+            }
+        }
+        i += 1;
+    }
+    return expression.clone();
+}
+
+#[derive(Debug, Clone)]
 struct AST {
     root: Option<ASTNode>
 }
@@ -397,3 +484,75 @@ struct ASTNode {
     right: Option<Box<ASTNode>>
 }
 
+struct Evaluator {
+    expression: Vec<Token>,
+    tree: AST
+}
+
+impl Evaluator {
+    fn getAST(&self) -> AST {
+        self.tree.clone()
+    }
+    
+    fn buildAST(&mut self) {
+        self.tree = AST { root: Some(self.parseExpr(self.expression.clone())) };
+    }
+
+    fn searchPeak(&self, expression: &Vec<Token>) -> u16 {
+        let mut maxVal: u8 = 0;
+        let mut pos: u16 = 0;
+
+        for (index, token) in expression.iter().enumerate() {
+            if let Some(&currPrec) = precedences.get(&token.tType) {
+                if currPrec > maxVal {
+                    maxVal = currPrec;
+                    pos = index as u16;
+                }
+            } else {
+                println!("Warning: Token type {:?} not found in precedences", token.tType);
+            }
+        }
+        pos
+    }
+
+    fn parseExpr(&self, expression: Vec<Token>) -> ASTNode {
+        let mut root: ASTNode = ASTNode { nType: "".to_string(), content: "".to_string(), left: None, right: None };
+
+        if expression.is_empty() {
+            return root;
+        }
+
+        let index = self.searchPeak(&expression);
+        let peak = &expression[index as usize];
+
+        if peak.tType == TokenType::BOOL {
+            root.nType = "bool".to_string();
+            root.content = peak.content.clone();
+        }
+
+        if peak.tType == TokenType::BLOCK {
+            return self.parseExpr(peak.expression.clone());
+        }
+
+        if peak.tType == TokenType::NOT {
+            let rhs: Vec<Token> = expression[(index + 1) as usize..].to_vec();
+            root.nType = "unaryOp".to_string();
+            root.content = peak.content.clone();
+            root.right = Some(Box::new(self.parseExpr(rhs)));
+            return root;
+        }
+
+        if operatorTypes.contains(&peak.tType) && peak.tType != TokenType::NOT {
+            
+            root.nType = "binaryOp".to_string();
+            root.content = peak.content.clone();
+
+            let lhs: Vec<Token> = expression[..index as usize].to_vec();
+            let rhs: Vec<Token> = expression[((index+1) as usize)..].to_vec();
+            root.left = Some(Box::new(self.parseExpr(lhs)));
+            root.right = Some(Box::new(self.parseExpr(rhs)));
+
+        }
+        root
+    }
+}

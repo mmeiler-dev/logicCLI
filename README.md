@@ -7,7 +7,7 @@ Eine Terminal Applikation zum automatischen aufstellen von Wahrheitswertetabelle
 ## Todo
 
 - [ ] Boolean expression
-    - [ ] parsing
+    - [*] parsing
     - [ ] evaluation
 - [ ] commands
     - [ ] parsing
