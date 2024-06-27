@@ -6,10 +6,11 @@ Eine Terminal Applikation zum automatischen aufstellen von Wahrheitswertetabelle
 
 ## Todo
 
-- [ ] Boolean expression
+- [x] Boolean expression
     - [x] parsing
-    - [ ] evaluation
+    - [x] evaluation
 - [ ] commands
     - [ ] parsing
     - [ ] evaluation
 - [ ] CLI
+- [ ] "gutes" error handling
