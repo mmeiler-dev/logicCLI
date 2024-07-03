@@ -2,7 +2,7 @@
 Eine Terminal Applikation zum automatischen aufstellen von Wahrheitswertetabellen und mehr
 
 > [!WARNING]
-> Dieses Projekt ist noch komplett in Arbeit! Es funktioniert noch nichts!
+> Dieses Projekt ist noch komplett in Arbeit! Es funktioniert zwar die Evaluation von booleschen Ausdrücken, aber noch nichts weiteres!
 
 ## Todo
 
