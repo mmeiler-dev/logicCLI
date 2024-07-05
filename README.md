@@ -6,7 +6,7 @@ Eine Terminal Applikation zum automatischen aufstellen von Wahrheitswertetabelle
 
 ## Befehle
 
-- boolesche Ausdrücke: <AUSDRUCK> VARIABLE1 <0/1> VARIABLE2 <0/1> ... VARIABLEn <0/1>
+- boolesche Ausdrücke: `<AUSDRUCK> VARIABLE1 <0/1> VARIABLE2 <0/1> ... VARIABLEn <0/1>`
 
 ## Todo
 
